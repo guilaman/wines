@@ -1,0 +1,752 @@
+---
+title: "UDAND_R-project"
+author: G.A.C.
+date: 2019-02-19
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# suppress code and warnings,
+# 
+knitr::opts_chunk$set(fig.width=8, fig.height=5, fig.align='center',
+                      fig.path='Figs/', tidy=TRUE,
+                      echo=FALSE, warning=FALSE, message=FALSE)
+```
+
+The dataset analyzed contains information about the chemical properties of
+a sample of almost 5000 white wines, with 11 different measurements and a
+'quality' score for each observation. I will attempt to answer the following
+question:
+
+##Which chemical properties make a white wine stand out?
+
+###[Skip to Final Plots and Summary](#id1)
+
+***
+
+```{r loading-data-libraries, warning=FALSE, message=FALSE}
+#### Loading data and necessary libraries
+library(ggplot2)
+library(ggpubr) # for arranging plots together
+library(GGally) # for a correlation matrix
+library(memisc) # for a linear model
+wwine <- read.csv('wineQualityWhites.csv')
+```
+
+#### A quick look at the data
+
+```{r quick-look}
+print('NA values:')
+wwine[is.na(wwine)]
+print('duplicate observations:')
+dim(wwine[duplicated(wwine$X)])[2]
+print('structure of the data:')
+str(wwine)
+```
+
+It looks like there are no missing or duplicate values.
+The variable *X* identifies each sample of wine.
+The variable *quality* is the dependent variable that I will try to
+explain with all the other variables showing chemical properties of each wine.
+
+***
+
+###Univariate analysis
+I want to see a summary of the *quality* variable first:
+
+```{r quality-summary}
+summary(wwine$quality)
+table(wwine$quality)
+```
+```{r quality-barplot}
+# since the variable is not continuous I make a bar plot instead of a histogram
+ggplot(wwine, aes(x=factor(quality),
+                  color=I('dark green'),
+                  fill=I('light green'))) +
+  geom_bar() + theme(aspect.ratio = .5)
+```
+
+The distribution is 'normal' shaped; the ratings are evenly distributed with
+the mean value being very close to the median.
+
+
+Next I will look at the distribution of the chemical properties that a person
+without any deep knowledge about wine or chemistry might feel more familiar
+with, looking at the most common values and the variablity in this sample:
+*alcohol* content (measured in percentage of volume) and *residual sugar* 
+(measured in
+[grams per litre](https://en.wikipedia.org/wiki/Sweetness_of_wine#Residual_sugar))
+.
+
+I also want to look at the values of *density* and *pH* compared to those of
+water (at room temperature,
+around [0.998 grams per mililitre](https://en.wikipedia.org/wiki/Density#Water)
+and a [pH of 7.0](https://en.wikipedia.org/wiki/PH)).
+
+
+I will use blue color to mark the inter-quartile range for each variable:
+the middle 50% of values between the bottom 25% and the top 25% of all
+observations ordered by said variable.
+
+```{r variable_histograms-alcohol}
+ggplot(wwine, aes(x=alcohol, color=I('dark blue'),
+                  fill=I(ifelse(wwine$alcohol<=quantile(wwine$alcohol, .75),
+            ifelse(wwine$alcohol>=quantile(wwine$alcohol,
+                                          .25),
+                   'light blue', 'grey'), 'grey')))) +
+  geom_histogram(binwidth=.1) + ggtitle('Alcohol content, all observations')
+
+summary(wwine$alcohol)
+```
+
+The middle 50% of the wines in the sample have an alcohol content between 9.5%
+and 11.4%.
+The minimum and maximum values are 8.0% and 14.2% and the distribution is
+fairly even although there is somewhat of a right skew with the highest values
+ranging further past the third quartile than the lowest values extend between
+the first quartile and the minimum.
+
+
+```{r variable_histograms-sugar}
+ggplot(wwine, aes(x=residual.sugar, color=I('dark blue'),
+                  fill=I(ifelse(wwine$residual.sugar<=
+                                  quantile(wwine$residual.sugar, .75),
+            ifelse(wwine$residual.sugar>=quantile(wwine$residual.sugar,
+                                          .25),
+                   'light blue', 'grey'), 'grey')))) +
+  geom_histogram(binwidth=.25) +
+  ggtitle('Residual Sugar, x axis limited to 99.9th percentile') +
+  xlim(c(min(wwine$residual.sugar), quantile(wwine$residual.sugar, .999)))
+
+summary(wwine$residual.sugar)
+```
+
+In the case of residual sugar the range of values found in the sample is much
+wider and the distribution is very skewed to the right.
+The bulk of the distribution ranges from concentrations of about one gram per
+litre to values over ten times higher, and there are ouliers up to more than
+60 grams per litre that make an x axis limit necessary.
+Before seeing any correlation, the high variability in this chemical property
+suggests that I should not expect it to have a big impact on the quality of a
+white wine.
+
+
+```{r variable_histograms-density}
+ggplot(wwine, aes(x=density, color=I('dark blue'),
+                  fill=I(ifelse(wwine$density<=quantile(wwine$density, .75),
+            ifelse(wwine$density>=quantile(wwine$density,
+                                          .25),
+                   'light blue', 'grey'), 'grey')))) +
+  geom_histogram(binwidth=0.0002) +
+  ggtitle('Density, x axis limited to 99.9th percentile') +
+  xlim(c(min(wwine$density), quantile(wwine$density, .999)))
+
+summary(wwine$density)
+```
+
+The density of white wine is very similar to that of water and there is little
+variability in the values found. There seem to be some outliers but the
+distribution is otherwise normal shaped.
+
+
+```{r variable_histograms-ph}
+ggplot(wwine, aes(x=pH, color=I('dark blue'),
+                  fill=I(ifelse(wwine$pH<=quantile(wwine$pH, .75),
+            ifelse(wwine$pH>=quantile(wwine$pH, .25),
+                   'light blue', 'grey'), 'grey')))) +
+  geom_histogram(binwidth=.01) +
+  ggtitle('pH, all observations')
+
+summary(wwine$pH)
+```
+
+White wine is very acidic compared to water and its pH follows a normal
+distribution that doesn't appear to indicate big variability.
+Still, considering the logarithmic nature of pH it seems that wines at
+one end of the distribution might be
+much more acidic than those at the other end, so I would need to look at
+the correlation with quality to really know if pH is determinant.
+
+***
+
+I decide to make three bins for the *quality* variable and see if I find any
+patterns that can answer the question raised earlier:
+
+**Which chemical properties make a white wine stand out?**
+
+#####Response variable bins
+First I decide the *quality* scores to divide at, and check that the amount of
+observations in each bin is suitable for my purposes:
+
+```{r quality-bins}
+wwine$quality.bin <- cut(wwine$quality,
+                         breaks=c(0,5,6,9),
+                         labels=c('<=5: below average',
+                                  '6: average',
+                                  '>=7: above average'),
+                         include.lowest = TRUE,
+                         ordered_result = TRUE)
+
+table(wwine$quality.bin)
+```
+
+Then I set a color scale and make a barplot of the new *quality* bins:
+
+```{r qualbin-distribution}
+# it will help to set a color scale for the quality bins
+qualbin.scale <- scale_fill_manual('Quality bins:', values=c('<=5: below average'='red',
+                                       '6: average'='greenyellow',
+                                       '>=7: above average'='cyan'))
+
+# I can then add the scale to plots as a layer:
+ggplot(wwine, aes(x=quality.bin, fill=quality.bin,
+                  color=I('black'))) +
+  geom_bar(show.legend=FALSE) +
+  qualbin.scale
+```
+
+The dividing values I set for the quality bins split the observations
+fairly evenly. This is important for any conclusions to be meaningful, as
+I do not look for common features of only a tiny minority of the observations.
+
+***
+
+###Bivariate analysis
+
+####Finding the most relevant variables
+
+In order to focus on the more interesting chemical properties, I want to look
+at the correlations with *quality*. That way I can choose only a few variables
+to analyze further.
+
+```{r correl-heatmap}
+ggcorr(wwine[, c(2:13)],
+       label=TRUE, label_alpha=TRUE, label_round=2,
+       layout.exp=3, hjust=.9, size=4)
+```
+
+The results are **not promising: the strongest correlation with *quality***
+**is in the variable *alcohol*, with a correlation coefficient of 0.44**.
+**Of the other variables** with correlation coefficients with *quality* at
+least **close to $\pm0.2$, only *volatile acidity* does not show a stronger**
+**correlation of the same sign with *alcohol***.
+
+As I ventured earlier, the highly variable *residual sugar* has a very low
+correlation with quality. The effect of *pH* is equally low.
+
+***
+
+####Explanatory variable Box Plots
+I make box plots divided by quality bin for each of the explanatory
+variables that have a correlation coefficient with *quality*
+of at least close to $\pm0.2$: *alcohol* (.44), *volatile acidity* (-.19),
+*density* (-.31), *chlorides* (-.21) and *total sulfur dioxide* (-.17).
+
+```{r three-boxplots}
+# I assign plots to variables to later arrange them comfortably
+al.bp <- ggplot(data=wwine,
+       aes(y=alcohol,
+           x=quality.bin,
+           fill=quality.bin), xaxt='n') +
+  geom_boxplot() +
+  qualbin.scale +
+  ggtitle('Alcohol')
+
+va.bp <- ggplot(data =wwine,
+       aes(y=volatile.acidity,
+           x=quality.bin,
+           fill=quality.bin), xaxt='n') +
+  geom_boxplot() +
+  qualbin.scale +
+  ggtitle('Volatile acidity')
+
+sd.bp <- ggplot(data=wwine,
+       aes(y=total.sulfur.dioxide,
+           x=quality.bin,
+           fill=quality.bin), xaxt='n') +
+  geom_boxplot() +
+  qualbin.scale +
+  ggtitle('Total sulfur dioxide')
+
+# the function ggarrange lets me easily set a common legend for several plots
+ggarrange(al.bp, va.bp, sd.bp, ncol=3, common.legend = TRUE, legend='top')
+```
+
+Not all the visible trends are strong, however it is possible to see in these
+plots how, for example, of the wines rated 'below average', less than 25% (only
+those sitting above the higher bound of the IQR -the red box in this case)
+reach or exceed the same *alcohol* value that is surpassed by more than 75% of
+the wines rated 'above average' (since the lower end of the blue box -the
+first quartile of 'above average' wines- lies above the same *alcohol* value).
+
+
+One can look at the median values and IQRs of the different quality bins for
+each chemical property to get an idea of the variable's influence on quality.
+
+
+#####Dealing with outliers
+When outliers are present, limiting the axes to a certain percentile,
+for example leaving out the highest 1% of values for the variable,
+can help zoom in on the patterns shown by the plot.
+If I were to instead subset the data used for the plot, that would cause
+slight changes in the measures of median, IQR and so on.
+
+```{r boxplots-with-outliers, echo=FALSE, message=FALSE, warning=FALSE}
+dn.bp <- ggplot(data=wwine,
+       aes(y=density,
+           x=quality.bin,
+           fill=quality.bin), xaxt='n') +
+  geom_boxplot() +
+  qualbin.scale
+
+# I can directly add layers to a plot by its assigned variable name
+dn.bp1 <- dn.bp +
+  ggtitle('Density, all observations')
+
+dn.bp2 <- dn.bp +
+  scale_y_continuous(limits=c(min(wwine$density),
+                              quantile(wwine$density, .99))) +
+  ggtitle('Density; y limit 99th percentile')
+
+ch.bp <- ggplot(data=wwine,
+       aes(y=chlorides,
+           x=quality.bin,
+           fill=quality.bin)) +
+  geom_boxplot(show.legend=FALSE) +
+  qualbin.scale
+
+ch.bp1 <- ch.bp +
+  ggtitle('Chlorides, all observations')
+
+ch.bp2 <- ch.bp +
+  scale_y_continuous(limits=c(quantile(wwine$chlorides, .025),
+                              quantile(wwine$chlorides, .975))) +
+  ggtitle('Chlorides; y limits 2.5% and 97.5%')
+
+ggarrange(dn.bp1, dn.bp2, ch.bp1, ch.bp2,
+          ncol=2, nrow=2, common.legend=TRUE, legend='top')
+```
+
+
+***
+
+####Explanatory variable Histograms
+
+```{r five-histograms, echo=FALSE, message=FALSE, warning=FALSE}
+alc.hist <- ggplot(data=wwine, aes(x=alcohol, fill=quality.bin)) +
+  geom_histogram(binwidth=.1, show.legend=FALSE) +
+  qualbin.scale +
+  ggtitle('Alcohol;\nall observations')
+
+tsf.hist <- ggplot(data=wwine, aes(x=total.sulfur.dioxide, fill=quality.bin)) +
+  geom_histogram(binwidth=5, show.legend=FALSE) +
+  xlim(c(min(wwine$total.sulfur.dioxide),
+         quantile(wwine$total.sulfur.dioxide, .99))) +
+  qualbin.scale +
+  ggtitle('Tot. Sulfur Dioxide;\nx limit 99%')
+
+vla.hist <- ggplot(data=wwine, aes(x=volatile.acidity, fill=quality.bin)) +
+  geom_histogram(binwidth=.01, show.legend=FALSE) +
+  qualbin.scale +
+  xlim(c(min(wwine$volatile.acidity),
+         quantile(wwine$volatile.acidity, .975))) +
+  ggtitle('Volat. Acidity;\nx limit 97.5%')
+
+den.hist <- ggplot(data=wwine, aes(x=density, fill=quality.bin)) +
+  geom_histogram(binwidth=.0002, show.legend=FALSE) +
+  qualbin.scale +
+  xlim(c(min(wwine$density), quantile(wwine$density, .99))) +
+  ggtitle('Density;\nx limit 99%')
+
+chl.hist <- ggplot(data=wwine, aes(x=chlorides, fill=quality.bin)) +
+  geom_histogram(binwidth=.001) +
+  qualbin.scale +
+  xlim(c(min(wwine$chlorides), quantile(wwine$chlorides, .975))) +
+  ggtitle('Chlorides;\nx limit 97.5%')
+
+rsg.hist <- ggplot(data=wwine, aes(x=residual.sugar, fill=quality.bin)) +
+  geom_histogram(binwidth=.1) +
+  qualbin.scale +
+  xlim(c(min(wwine$residual.sugar), quantile(wwine$residual.sugar, .99))) +
+  ylim(c(0, 100)) +
+  ggtitle('Residual Sugar;\nxlim 99%, ylim 100')
+
+ggarrange(alc.hist, vla.hist, den.hist, chl.hist, tsf.hist, rsg.hist,
+          ncol=3, nrow=2, common.legend = TRUE, legend='right')
+```
+
+Similarly to the box plots, these histograms hint that past a certain threshold
+of each of these variables there seems to be a higher likelihood of the wine in
+question being 'below average', instead of 'average' or above in quality. It is
+difficult to make the same observation about the residual sugar histogram on
+the bottom right corner.
+
+#####Explanatory variable bins
+
+It may be interesting to bin each of these variables for more clarity in
+later plots.
+I write a function **exvr.bin** using the function **cut** to bin values
+as low, medium or high dividing them at the 33rd and 67th percentiles, so that
+I can more easily bin all the explanatory variables:
+
+```{r explvar-bins, echo=TRUE}
+exvr.bin = function(x) cut(x,
+                           c(min(x), quantile(x, .333),
+                             quantile(x, .667), max(x)),
+                         include.lowest=TRUE,
+                         labels=c('Bottom 33%',
+                                  'Middle 33%',
+                                  'Top 33%'),
+                         ordered_result=TRUE)
+
+#I can then pipe each column to my function and save time and possible typos:
+wwine$alcohol.bin <- wwine$alcohol%>%exvr.bin()
+```
+
+```{r apply-bins-scales}
+wwine$vol.acid.bin <- wwine$volatile.acidity%>%exvr.bin()
+wwine$tot.sulf.bin <- wwine$total.sulfur.dioxide%>%exvr.bin()
+wwine$density.bin <- wwine$density%>%exvr.bin()
+wwine$chloride.bin <- wwine$chlorides%>%exvr.bin()
+
+# I also set custom scales for the bins I will use:
+exvarbin.shape.scale <- scale_shape_manual(name='Chemical property bins:',
+                                     values=c('Bottom 33%'=16,
+                                              'Middle 33%'=15,
+                                              'Top 33%'=17))
+
+exvarbin.fill.scale <- scale_fill_manual('Chemical property bins:',
+                                         values=c('Bottom 33%'='navy',
+                                                   'Middle 33%'='orange',
+                                                   'Top 33%'='magenta'))
+
+exvarbin.color.scale <- scale_color_manual('Chemical property bins:',
+                                         values=c('Bottom 33%'='navy',
+                                                   'Middle 33%'='orange',
+                                                   'Top 33%'='magenta'))
+
+# Beside the previous 'fill' scale for quality bin, I will need a 'color' scale
+qualbin.col.scale <- scale_color_manual('Quality',
+                                        values=c('<=5: below average'='red',
+                                       '6: average'='greenyellow',
+                                       '>=7: above average'='cyan'))
+```
+
+***
+
+
+
+###Multivariate analysis
+The truly interesting patterns should become visible when combining several
+variables.
+
+
+####Linear Model
+I will first try to make a linear model to more clearly see which variables
+are useful for explaining *quality*.
+
+
+<a id="id2"></a>
+
+First I combine alcohol (which has the strongest correlation with quality) with
+the other variables separately.
+
+```{r linear-model1}
+m1 <- lm(quality ~ alcohol, data=wwine)
+m2 <- update(m1, ~. + volatile.acidity)
+m3 <- update(m1, ~. + density)
+m4 <- update(m1, ~. + total.sulfur.dioxide)
+m5 <- update(m1, ~. + chlorides)
+mtable(m1, m2, m3, m4, m5)
+```
+
+From the R-squared values I see that the only truly useful variables are
+*alcohol* and [*volatile acidity*](https://extension.psu.edu/volatile-acidity-in-wine).
+
+```{r linear-model2}
+m6 <- update(m2, ~. + density)
+m7 <- update(m2, ~. + total.sulfur.dioxide)
+m8 <- update(m2, ~. + chlorides)
+m9 <- update(m6, ~. + total.sulfur.dioxide)
+m10 <- update(m6, ~. + total.sulfur.dioxide + chlorides)
+mtable(m6, m7, m8, m9, m10)
+```
+
+This second attempt tells me that keeping *density* might have some value, but I
+will most likely discard total sulfur dioxide and *chlorides* because adding
+them would hardly improve the model (meaning they would only add noise to a
+visualization).
+
+
+####Scatterplots
+With the information from the R-squared values of the linear model I can now
+test whether the variables I chose actually add clarity to a visualization.
+
+I want to see scatterplots of the different variables against Quality, and I
+can add layers for the bins I made as color and shape. More variables could be
+added as size of the points, but this is likely to worsen
+overplotting especially given the non-continuous Quality variable and the low
+correlations that will not make for clearly separate groups but rather a messy
+mix of whatever distinct levels I set.
+
+Since color differences will be the easiest to distinguish, following the
+results of
+the linear model I will **compare the effect of adding to Alcohol (as x) and**
+**Volatile Acidity (as shape) a layer of color determined by the properties of**
+**Density, Chlorides or Total Sulfur Dioxide**. To maximize clarity I will use
+bins
+instead of the original continuous values for all explanatory variables other
+than Alcohol.
+
+Note: jitter has been added to the points to mitigate the overplotting caused
+by the discrete quality scores. Because of this jitter effect, the points
+corresponding to observations in the intersection of a certain quality score
+and alcohol content will not appear in exactly the same positions in the y axis
+in the different scatterplots. 
+
+```{r scatterplots1}
+ggplot(data = wwine,
+       aes(y=quality,
+           x=alcohol,
+           color=density.bin,
+           shape=vol.acid.bin)) +
+  geom_point(position = 'jitter', alpha=.35) +
+  exvarbin.shape.scale + exvarbin.color.scale +
+  guides(color=guide_legend(title='Density',
+                             override.aes = list(alpha=1)),
+         shape=guide_legend(title ='Volatile Acidity')) +
+  labs(title='Quality vs Alcohol and Volatile Acidity;\nDensity as color')
+```
+
+The distribution of the points hints the positive correlation
+between alcohol and quality.
+I can tell from this first plot that *density* is strongly inversely correlated
+with alcohol, but appears to have very little effect of its own on quality.
+If the shape layer reveals anything, it is that high quality wines with
+high volatile acidity are almost all high in alcohol.
+
+```{r scatterplots2}
+ggplot(data = wwine,
+       aes(y=quality,
+           x=alcohol,
+           color=tot.sulf.bin,
+           shape=vol.acid.bin)) +
+  geom_point(position = 'jitter', alpha=.35) +
+  exvarbin.shape.scale + exvarbin.color.scale +
+  guides(color=guide_legend(title='Tot. Sulfur Dioxide',
+                             override.aes = list(alpha=1)),
+         shape=guide_legend(title ='Volatile Acidity')) +
+  labs(title=
+    'Quality vs Alcohol and Volatile Acidity;\nTot. Sulfur Dioxide as color')
+```
+
+Adding *total sulfur dioxide* as a color layer only shows that it is
+correlated with
+alcohol, just in a weaker way than density. This variable is of no use in
+explaining quality.
+
+```{r scatterplots3}
+ggplot(data = wwine,
+       aes(y=quality,
+           x=alcohol,
+           color=chloride.bin,
+           shape=vol.acid.bin)) +
+  geom_point(position = 'jitter', alpha=.35) +
+  exvarbin.shape.scale + exvarbin.color.scale +
+  guides(color=guide_legend(title='Chlorides',
+                             override.aes = list(alpha=1)),
+         shape=guide_legend(title ='Volatile Acidity')) +
+  labs(title='Quality vs Alcohol and Volatile Acidity;\nChlorides as color')
+```
+
+Similarly to the previous plot, a negative correlation between Alcohol and
+Chlorides is apparent, however the three levels of the Chlorides color layer
+can be found in similar proportions in every level of Quality. This variable
+does not add much value to the visualization.
+
+
+After seeing the linear model's R-squared values and the color layers in these
+scatterplots, I decide to leave out the three variables and focus only on
+*alcohol* and *volatile acidity* for my final plots and conclusions.
+
+
+***
+***
+
+<a id="id1"></a> 
+
+##Final Plots and Summary
+The attempt to make a linear model makes me decide to focus on the the two
+variables *alcohol* and *volatile.acidity* as explanatory variables
+for *quality* of the white wine observations, as they seem to be the only ones
+from which some meaning can be reliably extracted.
+
+
+
+####**Observation counts at each quality score colored by bins of main variables**
+The bar plots below show **how many of the observed white wines fall into**
+**each discrete quality score**, and then look at this distribution
+separately to show **what relative values of the most relevant chemical**
+**properties** (bottom, middle and top third of measured values for each)
+**make up each quality score**.
+
+
+```{r final-barplots}
+q.alc.bar <- ggplot(data=wwine, aes(x=factor(quality), fill=alcohol.bin)) +
+  geom_bar() + exvarbin.fill.scale + ylab(NULL) + xlab(NULL) +
+  ggtitle('Colored by\nAlcohol content') + theme_dark()
+
+q.vac.bar <- ggplot(data=wwine, aes(x=factor(quality), fill=vol.acid.bin)) +
+  geom_bar() + exvarbin.fill.scale + ylab(NULL) + xlab(NULL) +
+  ggtitle('Colored by\nVolatile Acidity') + theme_dark()
+
+final.barplot <- ggarrange(q.alc.bar, q.vac.bar, ncol=2,
+                           common.legend=TRUE, legend='top')
+
+annotate_figure(final.barplot,
+                top=text_grob(
+                  'White wine observation counts at each Quality score
+colored by bins of main chemical properties',
+                  face='bold', size=15),
+                left=text_grob('Observation counts', size=11, face='bold',
+                               rot=90),
+                bottom=text_grob('Quality scores', size=11, face='bold'))
+```
+
+
+Besides showing what scores are most common, the bar plots show that most wines
+rated 5 or worse are relatively low in alcohol while those rated 7 or better
+are mostly high in alcohol content, or that relatively low volatile acidity is
+much less frequent in wines rated 5 or worse than in better rated ones.
+
+
+***
+
+####**Distribution of main explanatory variables divided by quality bin**
+The following box plots illustrate the most relevant chemical properties'
+correlations with the observed white wines' *quality*: positive in the case of
+*alcohol* and negative for *volatile.acidity*. The box plots
+**divide the white wine observations by quality (average, above, or below)**
+and **make it easy to visualize, for each of the chemical properties**, what
+the median value is (the value in **the center of the distribution**) and what
+values lie within the inter-quartile range (the middle 50% of values between
+the lowest 25% and the highest 75%, making **the bulk of the distribution**).
+Due to the presence of outliers, one of the plots leaves out the highest 1% of
+values to zoom in on the shape of the distribution.
+
+
+```{r final-boxplots}
+# I can use the plots I made earlier by variable name and add layers to them
+alc.final.bx <- al.bp + ylab('Alcohol (% of volume)') + xlab(NULL) +
+  labs(title='Alcohol content', subtitle='all observations') +
+  rremove('x.text')
+
+vac.final.bx <- va.bp + ylab('Volatile Acidity (g/L)') + xlab(NULL) +
+  scale_y_continuous(limits=c(min(wwine$volatile.acidity),
+                              quantile(wwine$volatile.acidity, .99))) +
+  labs(title='Volatile acidity', subtitle='y limit: 99th percentile') +
+  rremove('x.text')
+
+final.boxplot <- ggarrange(alc.final.bx, vac.final.bx,
+                           common.legend = TRUE, legend='bottom', ncol=2)
+
+annotate_figure(final.boxplot, top=text_grob(
+  'Distribution of most relevant chemical properties divided by Quality bin',
+  face='bold', size=15))
+```
+
+
+The box plots show graphically how only about a quarter of white wines rated 7
+or above in Quality have an alcohol content under 11%, while the
+majority of 'average' wines and most of the 'below average' wines have a lower
+alcohol content.
+Similarly, a value of Volatile Acidity above 0.3 grams per litre makes a white
+wine more likely to be rated 'below average', although in the case of this
+chemical property wines of quality 'average' and 'above average' do not seem
+to differ from each other and there are ouliers in all quality groups;
+variability in Volatile Acidity is more acceptable than in Alcohol.
+
+
+***
+
+####**Quality score explained by main variables**
+The scatterplot below can help in visualizing the patterns identified throghout
+the analysis.
+
+I plot the continuous values of Alcohol in the x axis because this variable has
+the strongest correlation with quality and thus shows the most clear shape.
+
+I represent the three levels of binned values of Volatile Acidity with a color
+scale because this is the only other variable with some effect on quality that
+is not correlated with Alcohol.
+
+I leave out other variables given their very small influence on quality (as
+measured and visualized in the [Multivariate Analysis section](#id2))
+and because
+their potential to distract the viewer from other patterns is greater
+than the value of the information that they could add to the plot.
+
+```{r final-scatterplot, fig.height=6, fig.width=9}
+final.scatterplot <- ggplot(data=wwine, 
+                              aes(y=factor(quality),
+                                  x=alcohol,
+                                  color=vol.acid.bin)) +
+    geom_point(position='jitter', alpha=.35) +
+    exvarbin.color.scale +
+    guides(colour=guide_legend(override.aes=list(alpha=1, size=3),
+                               title='Volatile Acidity')) +
+    theme(aspect.ratio=1) +
+    labs(title=
+  'Quality score (y) by Alcohol Content (x) and Volatile Acidity (color)',
+         subtitle='transparency and jitter added to mitigate overplotting',
+         y='Quality score',
+         x='Alcohol (% of volume)')
+  
+  annotate_figure(final.scatterplot,
+                  top=text_grob(
+       "White wines' quality score explained by main chemical properties",
+                    face='bold', size=15))
+```
+
+Despite the low correlations in the data, this plot can help see
+that the 'above average' wines with low alcohol content have low acidity in
+most cases, and most of the highly rated wines with high acidity are also high
+in alcohol content.
+
+White wines rated 'average' are a mixed bag, however among those rated 5 or
+worse a low volatile acidity is clearly less common.
+
+While some patterns are identifiable, the lack of more clear correlations
+suggests that other variables not measured in the available data play an
+important role in determining the quality score of a particular white wine.
+
+
+***
+
+
+##Reflections
+While a conclusion can be extracted that **the most reliable predictors for**
+**a white wine being rated highly** (or at least not being rated poorly)
+**are first a relatively high alcohol content, and second a**
+**relatively low volatile acidity**, there are many observations in the data
+that do not match these conditions.
+
+This suggests that **other variables that have not been accounted for** in the
+available data **may have an important impact on the quality rating**. Relevant
+data other than the chemical measurements available could be the
+temperature of each wine when rated or the time since production.
+
+
+The main difficulty in performing this analysis was the lack of significant
+correlations between the response variable and the available explanatory
+variables.
+
+Attempting to make a linear model provided valuable insight into which of the
+variables were of less relevance, in a way that may be more clear than just
+looking at the correlations and plots.
+
+Given these conditions, binning the different variables and then combining them
+in multivariate visualizations was useful for seeing the patters present.
+Perhaps more detailed binning of the variables and more zoomed-in
+visualizations to limit the noise could help extract more precise conclusions.
+
